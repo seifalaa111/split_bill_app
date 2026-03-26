@@ -1,0 +1,14 @@
+{
+  "name": "splitcheck",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev:server": "pnpm --filter @splitcheck/server dev",
+    "dev:web": "pnpm --filter @splitcheck/web dev",
+    "dev": "pnpm run --parallel dev:server dev:web",
+    "build": "pnpm --filter @splitcheck/shared build && pnpm --filter @splitcheck/server build && pnpm --filter @splitcheck/web build",
+    "test": "pnpm --filter @splitcheck/shared test && pnpm --filter @splitcheck/server test",
+    "db:migrate": "pnpm --filter @splitcheck/server db:migrate",
+    "db:generate": "pnpm --filter @splitcheck/server db:generate"
+  }
+}

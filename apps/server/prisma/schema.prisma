@@ -1,0 +1,80 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  sessionId        String        @id @default(dbgenerated("gen_random_uuid()")) @map("session_id") @db.Uuid
+  sessionCode      String        @unique @map("session_code") @db.VarChar(6)
+  billTotal        Decimal       @map("bill_total") @db.Decimal(10, 2)
+  billSubtotal     Decimal       @default(0) @map("bill_subtotal") @db.Decimal(10, 2)
+  taxPct           Decimal       @default(0) @map("tax_pct") @db.Decimal(5, 2)
+  servicePct       Decimal       @default(0) @map("service_pct") @db.Decimal(5, 2)
+  taxAmount        Decimal       @default(0) @map("tax_amount") @db.Decimal(10, 2)
+  serviceAmount    Decimal       @default(0) @map("service_amount") @db.Decimal(10, 2)
+  expectedHeadcount Int          @default(2) @map("expected_headcount")
+  status           String        @default("DRAFT") @db.VarChar(20)
+  createdAt        DateTime      @default(now()) @map("created_at")
+  expiresAt        DateTime      @map("expires_at")
+  closedAt         DateTime?     @map("closed_at")
+
+  items            BillItem[]
+  participants     Participant[]
+
+  @@map("sessions")
+}
+
+model BillItem {
+  itemId     String   @id @default(dbgenerated("gen_random_uuid()")) @map("item_id") @db.Uuid
+  sessionId  String   @map("session_id") @db.Uuid
+  name       String   @db.VarChar(60)
+  quantity   Int      @default(1)
+  unitPrice  Decimal  @map("unit_price") @db.Decimal(10, 2)
+  lineTotal  Decimal  @map("line_total") @db.Decimal(10, 2)
+  isShared   Boolean  @default(false) @map("is_shared")
+  claimedQty Int      @default(0) @map("claimed_qty")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  session    Session  @relation(fields: [sessionId], references: [sessionId])
+  claims     Claim[]
+
+  @@map("bill_items")
+}
+
+model Participant {
+  participantId String    @id @default(dbgenerated("gen_random_uuid()")) @map("participant_id") @db.Uuid
+  sessionId     String    @map("session_id") @db.Uuid
+  displayName   String    @map("display_name") @db.VarChar(30)
+  role          String    @default("GUEST") @db.VarChar(10)
+  status        String    @default("BROWSING") @db.VarChar(20)
+  subtotal      Decimal   @default(0) @db.Decimal(10, 2)
+  taxShare      Decimal   @default(0) @map("tax_share") @db.Decimal(10, 2)
+  serviceShare  Decimal   @default(0) @map("service_share") @db.Decimal(10, 2)
+  total         Decimal   @default(0) @db.Decimal(10, 2)
+  joinedAt      DateTime  @default(now()) @map("joined_at")
+  checkedOutAt  DateTime? @map("checked_out_at")
+
+  session       Session   @relation(fields: [sessionId], references: [sessionId])
+  claims        Claim[]
+
+  @@map("participants")
+}
+
+model Claim {
+  claimId       String   @id @default(dbgenerated("gen_random_uuid()")) @map("claim_id") @db.Uuid
+  itemId        String   @map("item_id") @db.Uuid
+  participantId String   @map("participant_id") @db.Uuid
+  quantity      Int      @default(1)
+  shareFraction Decimal  @default(1.0000) @map("share_fraction") @db.Decimal(5, 4)
+  amount        Decimal  @default(0) @db.Decimal(10, 2)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  item          BillItem    @relation(fields: [itemId], references: [itemId])
+  participant   Participant @relation(fields: [participantId], references: [participantId])
+
+  @@map("claims")
+}

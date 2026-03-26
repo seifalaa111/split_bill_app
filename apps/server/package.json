@@ -1,0 +1,27 @@
+{
+  "name": "@splitcheck/server",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "db:migrate": "prisma migrate dev",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push"
+  },
+  "dependencies": {
+    "@fastify/cors": "^9.0.0",
+    "@splitcheck/shared": "workspace:*",
+    "fastify": "^4.28.0"
+  },
+  "devDependencies": {
+    "@prisma/client": "^7.5.0",
+    "@types/node": "^20.14.0",
+    "prisma": "^7.5.0",
+    "tsx": "^4.15.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
