@@ -1,4 +1,11 @@
-import { SessionStatus, ParticipantRole, ParticipantStatus } from "./constants";
+import {
+  SessionStatus,
+  ParticipantRole,
+  ParticipantStatus,
+  DisputeStatus,
+  ResolutionType,
+  NudgePriority,
+} from "./constants";
 
 export interface Session {
   sessionId: string;
@@ -25,6 +32,7 @@ export interface BillItem {
   lineTotal: number;
   isShared: boolean;
   claimedQty: number;
+  absorbedByHost: boolean;
   createdAt: string;
 }
 
@@ -40,6 +48,7 @@ export interface Participant {
   total: number;
   joinedAt: string;
   checkedOutAt: string | null;
+  settledAt: string | null;
   avatarColor: string;
 }
 
@@ -52,6 +61,51 @@ export interface Claim {
   amount: number;
   createdAt: string;
 }
+
+// ─── Dispute Types ──────────────────────────────────────────────────
+
+export interface Dispute {
+  disputeId: string;
+  sessionId: string;
+  participantId: string;
+  reason: string;
+  status: DisputeStatus;
+  resolutionNote: string | null;
+  resolutionType: ResolutionType | null;
+  originalTotal: number;
+  adjustedTotal: number | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export interface CreateDisputeRequest {
+  session_id: string;
+  participant_id: string;
+  reason: string;
+}
+
+export interface ResolveDisputeRequest {
+  status: "RESOLVED" | "REJECTED";
+  resolution_type: ResolutionType;
+  resolution_note?: string;
+  adjusted_total?: number;
+}
+
+// ─── Nudge Types ────────────────────────────────────────────────────
+
+export interface NudgePayload {
+  nudge_id: string;
+  message: string;
+  priority: NudgePriority;
+}
+
+// ─── Reallocation Types ─────────────────────────────────────────────
+
+export interface AssignItemRequest {
+  participant_id: string;
+}
+
+// ─── API Types ──────────────────────────────────────────────────────
 
 export interface CreateSessionRequest {
   billTotal: number;

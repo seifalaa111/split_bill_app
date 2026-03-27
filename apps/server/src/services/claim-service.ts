@@ -4,8 +4,10 @@ import { toNumber } from "../lib/serializers";
 import {
   calculateSharedItemCost,
   calculateClaimAmount,
+  ParticipantStatus,
 } from "@splitcheck/shared";
 import { ValidationError, NotFoundError } from "./session-service";
+import { transitionParticipant } from "./state-machine-service";
 
 type TransactionClient = Prisma.TransactionClient;
 
@@ -52,7 +54,11 @@ export async function claimItem(itemId: string, input: ClaimItemInput) {
       throw new NotFoundError("Item not found");
     }
 
-    if (item.session.status !== "OPEN") {
+    if (
+      item.session.status !== "OPEN" &&
+      item.session.status !== "PARTIALLY_SETTLED" &&
+      item.session.status !== "DISPUTED"
+    ) {
       throw new ValidationError("Session is not open for claims");
     }
 
@@ -68,8 +74,13 @@ export async function claimItem(itemId: string, input: ClaimItemInput) {
       throw new ValidationError("Participant is not in this session");
     }
 
-    if (participant.status === "CHECKED_OUT") {
-      throw new ValidationError("Cannot claim items after checkout");
+    // Can only claim while BROWSING or CLAIMING
+    const claimableStatuses: string[] = [
+      ParticipantStatus.BROWSING,
+      ParticipantStatus.CLAIMING,
+    ];
+    if (!claimableStatuses.includes(participant.status)) {
+      throw new ValidationError("Cannot claim items in current status");
     }
 
     const existingClaim = item.claims.find(
@@ -113,10 +124,11 @@ export async function claimItem(itemId: string, input: ClaimItemInput) {
         data: { claimedQty: newClaimantCount },
       });
 
-      if (participant.status === "BROWSING") {
-        await tx.participant.update({
-          where: { participantId: input.participantId },
-          data: { status: "CLAIMING" },
+      if (participant.status === ParticipantStatus.BROWSING) {
+        await transitionParticipant(input.participantId, ParticipantStatus.CLAIMING, {
+          tx,
+          skipBroadcast: true,
+          skipSessionRecompute: true,
         });
       }
 
@@ -154,10 +166,11 @@ export async function claimItem(itemId: string, input: ClaimItemInput) {
         data: { claimedQty: totalClaimed + input.quantity },
       });
 
-      if (participant.status === "BROWSING") {
-        await tx.participant.update({
-          where: { participantId: input.participantId },
-          data: { status: "CLAIMING" },
+      if (participant.status === ParticipantStatus.BROWSING) {
+        await transitionParticipant(input.participantId, ParticipantStatus.CLAIMING, {
+          tx,
+          skipBroadcast: true,
+          skipSessionRecompute: true,
         });
       }
 
@@ -177,8 +190,14 @@ export async function unclaimItem(claimId: string) {
       throw new NotFoundError("Claim not found");
     }
 
-    if (claim.participant.status === "CHECKED_OUT") {
-      throw new ValidationError("Cannot unclaim after checkout");
+    // Can only unclaim while BROWSING, CLAIMING, or REVIEWING
+    const unclaimableStatuses: string[] = [
+      ParticipantStatus.BROWSING,
+      ParticipantStatus.CLAIMING,
+      ParticipantStatus.REVIEWING,
+    ];
+    if (!unclaimableStatuses.includes(claim.participant.status)) {
+      throw new ValidationError("Cannot unclaim in current status");
     }
 
     await tx.claim.delete({ where: { claimId } });
@@ -221,10 +240,14 @@ export async function unclaimItem(claimId: string) {
     });
 
     if (remainingParticipantClaims.length === 0) {
-      await tx.participant.update({
-        where: { participantId: claim.participantId },
-        data: { status: "BROWSING" },
-      });
+      // Only transition to BROWSING if currently CLAIMING
+      if (claim.participant.status === ParticipantStatus.CLAIMING) {
+        await transitionParticipant(claim.participantId, ParticipantStatus.BROWSING, {
+          tx,
+          skipBroadcast: true,
+          skipSessionRecompute: true,
+        });
+      }
     }
 
     return { deleted: true };

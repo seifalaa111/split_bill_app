@@ -4,6 +4,7 @@ import type {
   BillItem,
   Participant,
   Claim,
+  Dispute,
   CreateSessionRequest,
   AddItemRequest,
   UpdateItemRequest,
@@ -133,6 +134,81 @@ export async function checkoutParticipant(
   participantId: string
 ): Promise<ApiResponse<Participant>> {
   return apiFetch<Participant>(`/api/participants/${participantId}/checkout`, {
+    method: "POST",
+  });
+}
+
+// Settlement
+export async function settleParticipant(
+  participantId: string
+): Promise<ApiResponse<{ success: boolean }>> {
+  return apiFetch(`/api/participants/${participantId}/settle`, {
+    method: "POST",
+  });
+}
+
+// Disputes
+export async function createDispute(input: {
+  session_id: string;
+  participant_id: string;
+  reason: string;
+}): Promise<ApiResponse<Dispute>> {
+  return apiFetch<Dispute>("/api/disputes", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function getSessionDisputes(
+  sessionId: string
+): Promise<ApiResponse<(Dispute & { participantName: string })[]>> {
+  return apiFetch(`/api/sessions/${sessionId}/disputes`);
+}
+
+export async function getParticipantDisputes(
+  participantId: string
+): Promise<ApiResponse<Dispute[]>> {
+  return apiFetch(`/api/participants/${participantId}/disputes`);
+}
+
+export async function resolveDispute(
+  disputeId: string,
+  input: {
+    status: "RESOLVED" | "REJECTED";
+    resolution_type: "ADJUST" | "REJECT" | "OVERRIDE";
+    resolution_note?: string;
+    adjusted_total?: number;
+  }
+): Promise<ApiResponse<Dispute>> {
+  return apiFetch<Dispute>(`/api/disputes/${disputeId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+// Reallocation
+export async function assignItem(
+  itemId: string,
+  participantId: string
+): Promise<ApiResponse<{ item_name: string; assigned_to: string; amount: number }>> {
+  return apiFetch(`/api/items/${itemId}/assign`, {
+    method: "POST",
+    body: JSON.stringify({ participant_id: participantId }),
+  });
+}
+
+export async function splitItemEqually(
+  itemId: string
+): Promise<ApiResponse<{ item_name: string; per_person: number; total_cost: number }>> {
+  return apiFetch(`/api/items/${itemId}/split-equally`, {
+    method: "POST",
+  });
+}
+
+export async function absorbItem(
+  itemId: string
+): Promise<ApiResponse<{ item_name: string; absorbed: boolean }>> {
+  return apiFetch(`/api/items/${itemId}/absorb`, {
     method: "POST",
   });
 }

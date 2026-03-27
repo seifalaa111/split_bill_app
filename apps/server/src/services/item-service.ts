@@ -135,6 +135,7 @@ interface ItemWithClaims {
   lineTotal: Prisma.Decimal;
   isShared: boolean;
   claimedQty: number;
+  absorbedByHost: boolean;
   createdAt: Date;
   claims: ClaimWithParticipant[];
 }

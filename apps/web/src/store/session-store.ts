@@ -7,6 +7,7 @@ import type {
   Participant,
   Claim,
   BillItemWithClaims,
+  NudgePayload,
 } from "@splitcheck/shared";
 
 interface SessionState {
@@ -15,6 +16,10 @@ interface SessionState {
   items: BillItemWithClaims[];
   participants: Participant[];
   currentParticipant: Participant | null;
+
+  // Phase 3: Nudges
+  activeNudge: NudgePayload | null;
+  dismissedNudges: Set<string>;
 
   // Actions
   setSession: (session: Session & { items?: BillItemWithClaims[]; participants?: Participant[] }) => void;
@@ -32,6 +37,11 @@ interface SessionState {
   rollbackClaim: (itemId: string, participantId: string) => void;
   optimisticUnclaim: (claimId: string, itemId: string) => void;
 
+  // Nudge actions
+  showNudge: (nudge: NudgePayload) => void;
+  dismissNudge: (nudgeId: string) => void;
+  clearNudge: () => void;
+
   reset: () => void;
 }
 
@@ -40,6 +50,8 @@ const initialState = {
   items: [],
   participants: [],
   currentParticipant: null,
+  activeNudge: null,
+  dismissedNudges: new Set<string>(),
 };
 
 export const useSessionStore = create<SessionState>((set) => ({
@@ -177,6 +189,28 @@ export const useSessionStore = create<SessionState>((set) => ({
 
       return { items };
     }),
+
+  // Nudge actions
+  showNudge: (nudge) =>
+    set((state) => {
+      if (state.dismissedNudges.has(nudge.nudge_id)) {
+        return state; // Already dismissed — don't show again
+      }
+      return { activeNudge: nudge };
+    }),
+
+  dismissNudge: (nudgeId) =>
+    set((state) => {
+      const newDismissed = new Set(state.dismissedNudges);
+      newDismissed.add(nudgeId);
+      return {
+        activeNudge:
+          state.activeNudge?.nudge_id === nudgeId ? null : state.activeNudge,
+        dismissedNudges: newDismissed,
+      };
+    }),
+
+  clearNudge: () => set({ activeNudge: null }),
 
   reset: () => set(initialState),
 }));

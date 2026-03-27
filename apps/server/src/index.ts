@@ -5,6 +5,8 @@ import { registerItemRoutes } from "./routes/items";
 import { registerClaimRoutes } from "./routes/claims";
 import { registerParticipantRoutes } from "./routes/participants";
 import { registerFeedRoutes } from "./routes/feed";
+import { registerDisputeRoutes } from "./routes/disputes";
+import { registerReallocationRoutes } from "./routes/reallocation";
 import { setupSocketIO } from "./ws/socket-server";
 
 const PORT = Number(process.env.PORT) || 3001;
@@ -35,6 +37,8 @@ async function buildServer() {
   await registerClaimRoutes(app);
   await registerParticipantRoutes(app);
   await registerFeedRoutes(app);
+  await registerDisputeRoutes(app);
+  await registerReallocationRoutes(app);
 
   return app;
 }

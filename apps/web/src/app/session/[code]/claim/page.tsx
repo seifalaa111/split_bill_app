@@ -7,6 +7,7 @@ import { useSessionStore } from "@/store/session-store";
 import { useSocket } from "@/providers/socket-provider";
 import { SocketWrapper } from "@/components/socket-wrapper";
 import { ActivityFeedGuest } from "@/components/activity-feed-guest";
+import { NudgeBanner } from "@/components/nudge-banner";
 import { ItemCard } from "@/components/item-card";
 import * as api from "@/lib/api";
 import { formatEgp } from "@/lib/utils";
@@ -196,6 +197,9 @@ function ClaimPageContent() {
             Tap items you had — {currentParticipant.displayName}
           </p>
         </div>
+
+        {/* Nudge Banner */}
+        <NudgeBanner />
 
         {/* Activity Feed */}
         <ActivityFeedGuest />

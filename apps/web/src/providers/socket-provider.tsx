@@ -23,11 +23,20 @@ import type {
   ItemUpdatedPayload,
   ItemDeletedPayload,
   ParticipantCheckoutBroadcastPayload,
+  ParticipantSettledPayload,
+  ParticipantStatusChangedPayload,
+  SessionStatusChangedPayload,
   SessionClosedPayload,
+  DisputeRaisedPayload,
+  DisputeResolvedPayload,
+  NudgeShowPayload,
+  ItemReassignedPayload,
   WsAckResponse,
   ClaimCreatePayload,
   ClaimDeletePayload,
   ParticipantCheckoutPayload,
+  ParticipantSettlePayload,
+  DisputeCreatePayload,
 } from "@splitcheck/shared";
 
 type TypedSocket = Socket<ServerToClientEvents, ClientToServerEvents>;
@@ -37,16 +46,16 @@ export type ConnectionStatus = "connected" | "disconnected" | "reconnecting";
 interface SocketContextValue {
   socket: TypedSocket | null;
   status: ConnectionStatus;
-  emitClaimCreate: (
-    payload: ClaimCreatePayload
-  ) => Promise<WsAckResponse>;
-  emitClaimDelete: (
-    payload: ClaimDeletePayload
-  ) => Promise<WsAckResponse>;
-  emitCheckout: (
-    payload: ParticipantCheckoutPayload
-  ) => Promise<WsAckResponse>;
+  emitClaimCreate: (payload: ClaimCreatePayload) => Promise<WsAckResponse>;
+  emitClaimDelete: (payload: ClaimDeletePayload) => Promise<WsAckResponse>;
+  emitCheckout: (payload: ParticipantCheckoutPayload) => Promise<WsAckResponse>;
+  emitSettle: (payload: ParticipantSettlePayload) => Promise<WsAckResponse>;
+  emitDisputeCreate: (payload: DisputeCreatePayload) => Promise<WsAckResponse>;
   feedEvents: FeedEventPayload[];
+  // Phase 3: dispute events for host
+  disputeRaisedEvents: DisputeRaisedPayload[];
+  // Phase 3: dispute resolution for guest
+  lastDisputeResolution: DisputeResolvedPayload | null;
 }
 
 const SocketContext = createContext<SocketContextValue>({
@@ -55,7 +64,11 @@ const SocketContext = createContext<SocketContextValue>({
   emitClaimCreate: () => Promise.resolve({ success: false, error: "Not connected" }),
   emitClaimDelete: () => Promise.resolve({ success: false, error: "Not connected" }),
   emitCheckout: () => Promise.resolve({ success: false, error: "Not connected" }),
+  emitSettle: () => Promise.resolve({ success: false, error: "Not connected" }),
+  emitDisputeCreate: () => Promise.resolve({ success: false, error: "Not connected" }),
   feedEvents: [],
+  disputeRaisedEvents: [],
+  lastDisputeResolution: null,
 });
 
 export function useSocket() {
@@ -78,6 +91,8 @@ export function SocketProvider({
   const socketRef = useRef<TypedSocket | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const [feedEvents, setFeedEvents] = useState<FeedEventPayload[]>([]);
+  const [disputeRaisedEvents, setDisputeRaisedEvents] = useState<DisputeRaisedPayload[]>([]);
+  const [lastDisputeResolution, setLastDisputeResolution] = useState<DisputeResolvedPayload | null>(null);
 
   const {
     setSession,
@@ -85,15 +100,16 @@ export function SocketProvider({
     setParticipants,
     addParticipant,
     updateParticipant,
+    showNudge,
+    clearNudge,
   } = useSessionStore();
 
   // Apply state:sync to Zustand store
   const applyStateSync = useCallback(
     (payload: StateSyncPayload) => {
-      // Build the session object with items and participants attached
       const sessionWithData = {
         ...payload.session,
-        status: payload.session.status as "DRAFT" | "OPEN" | "CLOSED",
+        status: payload.session.status as string,
         items: payload.items.map((item) => ({
           ...item,
           claims: payload.claims
@@ -111,10 +127,10 @@ export function SocketProvider({
         participants: payload.participants.map((p) => ({
           ...p,
           role: p.role as "HOST" | "GUEST",
-          status: p.status as "BROWSING" | "CLAIMING" | "CHECKED_OUT",
+          status: p.status as string,
         })),
       };
-      setSession(sessionWithData);
+      setSession(sessionWithData as Parameters<typeof setSession>[0]);
     },
     [setSession]
   );
@@ -159,7 +175,7 @@ export function SocketProvider({
       setStatus("disconnected");
     });
 
-    // ─── Server → Client Events ──────────────────────────
+    // ─── Server → Client Events (Phase 1/2) ──────────────
 
     socket.on("state:sync", (payload: StateSyncPayload) => {
       applyStateSync(payload);
@@ -178,25 +194,25 @@ export function SocketProvider({
         total: 0,
         joinedAt: new Date().toISOString(),
         checkedOutAt: null,
+        settledAt: null,
         avatarColor: payload.avatar_color,
       });
     });
 
     socket.on("participant:left", (_payload: ParticipantLeftPayload) => {
-      // Don't remove — just informational for the feed
+      // Informational — don't remove participant
     });
 
     socket.on("participant:reconnected", (_payload: ParticipantReconnectedPayload) => {
-      // Informational — state:sync handles rehydration
+      // state:sync handles rehydration
     });
 
     socket.on("item:claimed", (_payload: ItemClaimedPayload) => {
-      // state:sync will follow with full state — no partial update needed
-      // But we could do an optimistic partial update here if we wanted snappier UI
+      // state:sync will follow
     });
 
     socket.on("item:unclaimed", (_payload: ItemUnclaimedPayload) => {
-      // Same as above — state:sync will handle it
+      // state:sync will follow
     });
 
     socket.on("item:updated", (_payload: ItemUpdatedPayload) => {
@@ -207,29 +223,46 @@ export function SocketProvider({
       // state:sync will follow
     });
 
-    socket.on("participant:checkout", (payload: ParticipantCheckoutBroadcastPayload) => {
-      updateParticipant({
-        participantId: payload.participant_id,
-        sessionId,
-        displayName: payload.display_name,
-        role: "GUEST",
-        status: "CHECKED_OUT",
-        subtotal: 0,
-        taxShare: 0,
-        serviceShare: 0,
-        total: payload.total,
-        joinedAt: "",
-        checkedOutAt: new Date().toISOString(),
-        avatarColor: "",
-      });
+    socket.on("participant:checkout", (_payload: ParticipantCheckoutBroadcastPayload) => {
+      // state:sync will follow with full updated state
     });
 
     socket.on("session:closed", (_payload: SessionClosedPayload) => {
-      // Could show a modal or redirect
+      // state:sync will follow
     });
 
     socket.on("feed:event", (payload: FeedEventPayload) => {
       setFeedEvents((prev) => [...prev, payload]);
+    });
+
+    // ─── Server → Client Events (Phase 3) ─────────────────
+
+    socket.on("participant:settled", (_payload: ParticipantSettledPayload) => {
+      // state:sync will follow
+    });
+
+    socket.on("participant:status_changed", (_payload: ParticipantStatusChangedPayload) => {
+      // state:sync will follow
+    });
+
+    socket.on("session:status_changed", (_payload: SessionStatusChangedPayload) => {
+      // state:sync will follow
+    });
+
+    socket.on("dispute:raised", (payload: DisputeRaisedPayload) => {
+      setDisputeRaisedEvents((prev) => [...prev, payload]);
+    });
+
+    socket.on("dispute:resolved", (payload: DisputeResolvedPayload) => {
+      setLastDisputeResolution(payload);
+    });
+
+    socket.on("nudge:show", (payload: NudgeShowPayload) => {
+      showNudge(payload);
+    });
+
+    socket.on("item:reassigned", (_payload: ItemReassignedPayload) => {
+      // state:sync will follow
     });
 
     return () => {
@@ -237,7 +270,7 @@ export function SocketProvider({
       socketRef.current = null;
       setStatus("disconnected");
     };
-  }, [sessionId, participantId, applyStateSync, addParticipant, updateParticipant]);
+  }, [sessionId, participantId, applyStateSync, addParticipant, updateParticipant, showNudge, clearNudge]);
 
   // ─── Emit Helpers (with ack) ──────────────────────────────
 
@@ -289,13 +322,49 @@ export function SocketProvider({
     []
   );
 
+  const emitSettle = useCallback(
+    (payload: ParticipantSettlePayload): Promise<WsAckResponse> => {
+      return new Promise((resolve) => {
+        const socket = socketRef.current;
+        if (!socket?.connected) {
+          resolve({ success: false, error: "Not connected" });
+          return;
+        }
+        socket.emit("participant:settle", payload, (response: WsAckResponse) => {
+          resolve(response);
+        });
+      });
+    },
+    []
+  );
+
+  const emitDisputeCreate = useCallback(
+    (payload: DisputeCreatePayload): Promise<WsAckResponse> => {
+      return new Promise((resolve) => {
+        const socket = socketRef.current;
+        if (!socket?.connected) {
+          resolve({ success: false, error: "Not connected" });
+          return;
+        }
+        socket.emit("dispute:create", payload, (response: WsAckResponse) => {
+          resolve(response);
+        });
+      });
+    },
+    []
+  );
+
   const value: SocketContextValue = {
     socket: socketRef.current,
     status,
     emitClaimCreate,
     emitClaimDelete,
     emitCheckout,
+    emitSettle,
+    emitDisputeCreate,
     feedEvents,
+    disputeRaisedEvents,
+    lastDisputeResolution,
   };
 
   return (

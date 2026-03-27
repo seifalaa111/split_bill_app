@@ -24,6 +24,7 @@ model Session {
 
   items            BillItem[]
   participants     Participant[]
+  disputes         Dispute[]
 
   @@map("sessions")
 }
@@ -37,6 +38,7 @@ model BillItem {
   lineTotal  Decimal  @map("line_total") @db.Decimal(10, 2)
   isShared   Boolean  @default(false) @map("is_shared")
   claimedQty Int      @default(0) @map("claimed_qty")
+  absorbedByHost Boolean @default(false) @map("absorbed_by_host")
   createdAt  DateTime @default(now()) @map("created_at")
 
   session    Session  @relation(fields: [sessionId], references: [sessionId])
@@ -57,10 +59,12 @@ model Participant {
   total         Decimal   @default(0) @db.Decimal(10, 2)
   joinedAt      DateTime  @default(now()) @map("joined_at")
   checkedOutAt  DateTime? @map("checked_out_at")
+  settledAt     DateTime? @map("settled_at")
   avatarColor   String    @default("#BAE1FF") @map("avatar_color") @db.VarChar(7)
 
   session       Session   @relation(fields: [sessionId], references: [sessionId])
   claims        Claim[]
+  disputes      Dispute[]
 
   @@map("participants")
 }
@@ -78,4 +82,25 @@ model Claim {
   participant   Participant @relation(fields: [participantId], references: [participantId])
 
   @@map("claims")
+}
+
+model Dispute {
+  disputeId      String    @id @default(dbgenerated("gen_random_uuid()")) @map("dispute_id") @db.Uuid
+  sessionId      String    @map("session_id") @db.Uuid
+  participantId  String    @map("participant_id") @db.Uuid
+  reason         String    @db.VarChar(200)
+  status         String    @default("OPEN") @db.VarChar(20)
+  resolutionNote String?   @map("resolution_note") @db.VarChar(200)
+  resolutionType String?   @map("resolution_type") @db.VarChar(20)
+  originalTotal  Decimal   @map("original_total") @db.Decimal(10, 2)
+  adjustedTotal  Decimal?  @map("adjusted_total") @db.Decimal(10, 2)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  resolvedAt     DateTime? @map("resolved_at")
+
+  session        Session     @relation(fields: [sessionId], references: [sessionId])
+  participant    Participant @relation(fields: [participantId], references: [participantId])
+
+  @@index([sessionId], map: "idx_disputes_session")
+  @@index([participantId], map: "idx_disputes_participant")
+  @@map("disputes")
 }

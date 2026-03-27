@@ -54,6 +54,7 @@ export function serializeItem(item: {
   lineTotal: Prisma.Decimal;
   isShared: boolean;
   claimedQty: number;
+  absorbedByHost: boolean;
   createdAt: Date;
 }) {
   return {
@@ -65,6 +66,7 @@ export function serializeItem(item: {
     lineTotal: toNumber(item.lineTotal),
     isShared: item.isShared,
     claimedQty: item.claimedQty,
+    absorbedByHost: item.absorbedByHost,
     createdAt: item.createdAt.toISOString(),
   };
 }
@@ -81,6 +83,7 @@ export function serializeParticipant(participant: {
   total: Prisma.Decimal;
   joinedAt: Date;
   checkedOutAt: Date | null;
+  settledAt: Date | null;
   avatarColor: string;
 }) {
   return {
@@ -95,6 +98,7 @@ export function serializeParticipant(participant: {
     total: toNumber(participant.total),
     joinedAt: participant.joinedAt.toISOString(),
     checkedOutAt: participant.checkedOutAt?.toISOString() ?? null,
+    settledAt: participant.settledAt?.toISOString() ?? null,
     avatarColor: participant.avatarColor,
   };
 }

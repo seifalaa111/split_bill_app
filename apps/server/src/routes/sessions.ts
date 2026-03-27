@@ -88,25 +88,7 @@ export async function registerSessionRoutes(app: FastifyInstance) {
           await buildAndCacheState(request.params.id);
         }
 
-        // If transitioning to CLOSED, broadcast to all clients
-        if (status === "CLOSED") {
-          try {
-            const io = getIO();
-            io.to(`session:${request.params.id}`).emit("session:closed", {
-              session_id: request.params.id,
-              reason: "Host closed the session",
-            });
-            await pushFeedEvent(request.params.id, {
-              type: "session_close",
-              actor_name: "Host",
-              item_name: undefined,
-              amount: undefined,
-              claimant_count: undefined,
-            });
-          } catch {
-            // Socket.IO may not be initialized yet
-          }
-        }
+        // State machine handles WS broadcast + feed for session transitions
 
         return reply.send({ success: true, data: session });
       } catch (error) {

@@ -37,7 +37,11 @@ export async function joinSession(sessionId: string, input: JoinSessionInput) {
     throw new NotFoundError("Session not found");
   }
 
-  if (session.status !== SessionStatus.OPEN) {
+  if (
+    session.status !== SessionStatus.OPEN &&
+    session.status !== SessionStatus.PARTIALLY_SETTLED &&
+    session.status !== SessionStatus.DISPUTED
+  ) {
     if (session.status === SessionStatus.CLOSED) {
       throw new ValidationError("Session has ended");
     }

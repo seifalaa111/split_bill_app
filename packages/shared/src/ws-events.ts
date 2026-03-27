@@ -23,6 +23,20 @@ export interface ParticipantCheckoutPayload {
   participant_id: string;
 }
 
+export interface ParticipantSettlePayload {
+  participant_id: string;
+}
+
+export interface DisputeCreatePayload {
+  session_id: string;
+  participant_id: string;
+  reason: string;
+}
+
+export interface NudgeDismissPayload {
+  nudge_id: string;
+}
+
 /** Events the client can emit to the server */
 export interface ClientToServerEvents {
   "claim:create": (
@@ -36,6 +50,17 @@ export interface ClientToServerEvents {
   "participant:checkout": (
     payload: ParticipantCheckoutPayload,
     ack: (response: WsAckResponse) => void
+  ) => void;
+  "participant:settle": (
+    payload: ParticipantSettlePayload,
+    ack: (response: WsAckResponse) => void
+  ) => void;
+  "dispute:create": (
+    payload: DisputeCreatePayload,
+    ack: (response: WsAckResponse) => void
+  ) => void;
+  "nudge:dismiss": (
+    payload: NudgeDismissPayload
   ) => void;
 }
 
@@ -97,6 +122,54 @@ export interface SessionClosedPayload {
   reason: string;
 }
 
+export interface DisputeRaisedPayload {
+  dispute_id: string;
+  participant_id: string;
+  participant_name: string;
+  reason: string;
+}
+
+export interface DisputeResolvedPayload {
+  dispute_id: string;
+  participant_id: string;
+  status: string;
+  resolution_type: string;
+  resolution_note: string | null;
+  adjusted_total: number | null;
+  rejected: boolean;
+}
+
+export interface ParticipantSettledPayload {
+  participant_id: string;
+  display_name: string;
+}
+
+export interface ParticipantStatusChangedPayload {
+  participant_id: string;
+  old_status: string;
+  new_status: string;
+}
+
+export interface SessionStatusChangedPayload {
+  old_status: string;
+  new_status: string;
+}
+
+export interface NudgeShowPayload {
+  nudge_id: string;
+  message: string;
+  priority: "low" | "medium" | "high";
+}
+
+export interface ItemReassignedPayload {
+  item_id: string;
+  item_name: string;
+  participant_id: string;
+  participant_name: string;
+  action: "assign" | "split" | "absorb";
+  amount_change: number;
+}
+
 export interface StateSyncPayload {
   session: SessionSnapshot;
   items: ItemSnapshot[];
@@ -123,9 +196,16 @@ export interface ServerToClientEvents {
   "item:updated": (payload: ItemUpdatedPayload) => void;
   "item:deleted": (payload: ItemDeletedPayload) => void;
   "participant:checkout": (payload: ParticipantCheckoutBroadcastPayload) => void;
+  "participant:settled": (payload: ParticipantSettledPayload) => void;
+  "participant:status_changed": (payload: ParticipantStatusChangedPayload) => void;
+  "session:status_changed": (payload: SessionStatusChangedPayload) => void;
   "session:closed": (payload: SessionClosedPayload) => void;
   "state:sync": (payload: StateSyncPayload) => void;
   "feed:event": (payload: FeedEventPayload) => void;
+  "dispute:raised": (payload: DisputeRaisedPayload) => void;
+  "dispute:resolved": (payload: DisputeResolvedPayload) => void;
+  "nudge:show": (payload: NudgeShowPayload) => void;
+  "item:reassigned": (payload: ItemReassignedPayload) => void;
 }
 
 // ─── Ack Response ─────────────────────────────────────────────────────
@@ -163,6 +243,7 @@ export interface ItemSnapshot {
   lineTotal: number;
   isShared: boolean;
   claimedQty: number;
+  absorbedByHost: boolean;
   createdAt: string;
 }
 
@@ -178,6 +259,7 @@ export interface ParticipantSnapshot {
   total: number;
   joinedAt: string;
   checkedOutAt: string | null;
+  settledAt: string | null;
   avatarColor: string;
 }
 
@@ -202,7 +284,18 @@ export type FeedEventType =
   | "host_edit"
   | "session_close"
   | "participant_left"
-  | "participant_reconnected";
+  | "participant_reconnected"
+  | "dispute_raised"
+  | "dispute_resolved"
+  | "dispute_rejected"
+  | "settled"
+  | "progress_50"
+  | "progress_almost"
+  | "progress_complete"
+  | "all_settled"
+  | "item_reassigned"
+  | "item_split"
+  | "item_absorbed";
 
 // ─── Socket.IO Connection Query ──────────────────────────────────────
 

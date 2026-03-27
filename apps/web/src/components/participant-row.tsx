@@ -18,15 +18,27 @@ export function ParticipantRow({
 }: ParticipantRowProps) {
   function getStatusBadge() {
     switch (status) {
+      case "SETTLED":
+        return <Badge variant="gold">Paid ✅</Badge>;
       case "CHECKED_OUT":
         return <Badge variant="success">Checked Out</Badge>;
+      case "DISPUTED":
+        return <Badge variant="destructive">Disputed ⚠️</Badge>;
+      case "REVIEWING":
+        return <Badge variant="warning">Reviewing</Badge>;
       case "CLAIMING":
-        return <Badge variant="warning">Claiming</Badge>;
+        return <Badge className="border-transparent bg-blue-100 text-blue-800">Claiming</Badge>;
       case "BROWSING":
       default:
         return <Badge variant="secondary">Browsing</Badge>;
     }
   }
+
+  const showTotal =
+    status === "CHECKED_OUT" ||
+    status === "SETTLED" ||
+    status === "DISPUTED" ||
+    status === "REVIEWING";
 
   return (
     <div className="flex items-center justify-between rounded-lg border p-3">
@@ -42,7 +54,7 @@ export function ParticipantRow({
         {getStatusBadge()}
       </div>
       <p className="text-sm font-semibold">
-        {status === "CHECKED_OUT" ? formatEgp(total) : "—"}
+        {showTotal ? formatEgp(total) : "—"}
       </p>
     </div>
   );

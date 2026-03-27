@@ -140,6 +140,81 @@ async function buildFeedMessage(
         emoji: "📡",
       };
 
+    // ─── Phase 3: Dispute Templates ───────────────────────────
+    case "dispute_raised":
+      return {
+        message: `${input.actor_name} has a question about their total.`,
+        emoji: "⚠️",
+      };
+
+    case "dispute_resolved":
+      return {
+        message: `${input.actor_name}'s total has been updated.`,
+        emoji: "✅",
+      };
+
+    case "dispute_rejected":
+      return {
+        message: `${input.actor_name}'s total was confirmed by the host.`,
+        emoji: "✅",
+      };
+
+    // ─── Phase 3: Settlement Templates ────────────────────────
+    case "settled":
+      return {
+        message: `${input.actor_name} has paid up!`,
+        emoji: "💰",
+      };
+
+    case "all_settled":
+      return {
+        message: "Session complete! Everyone has paid.",
+        emoji: "🎉",
+      };
+
+    // ─── Phase 3: Checkout Progress Templates ─────────────────
+    case "progress_50": {
+      const checked = input.claimant_count ?? 0;
+      const totalParticipants = input.amount ?? 0;
+      return {
+        message: `Halfway there — ${checked}/${totalParticipants > 0 ? totalParticipants : "?"} have checked out.`,
+        emoji: "⏳",
+      };
+    }
+
+    case "progress_almost": {
+      const remaining = input.claimant_count ?? 1;
+      return {
+        message: `Almost done — waiting on ${remaining} more ${remaining === 1 ? "person" : "people"}.`,
+        emoji: "👀",
+      };
+    }
+
+    case "progress_complete":
+      return {
+        message: "Everyone has checked out!",
+        emoji: "🎉",
+      };
+
+    // ─── Phase 3: Reallocation Templates ──────────────────────
+    case "item_reassigned":
+      return {
+        message: `Host assigned ${input.item_name ?? "an item"} to ${input.actor_name}.`,
+        emoji: "🔄",
+      };
+
+    case "item_split":
+      return {
+        message: `Host split ${input.item_name ?? "an item"} equally among everyone.`,
+        emoji: "🔄",
+      };
+
+    case "item_absorbed":
+      return {
+        message: `Host covered the ${input.item_name ?? "an item"}.`,
+        emoji: "🙌",
+      };
+
     default:
       return {
         message: `${input.actor_name} did something.`,

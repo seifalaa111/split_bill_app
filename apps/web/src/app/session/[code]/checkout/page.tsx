@@ -4,7 +4,10 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { CheckoutSummary } from "@/components/checkout-summary";
+import { NudgeBanner } from "@/components/nudge-banner";
 import { SocketWrapper } from "@/components/socket-wrapper";
 import { useSessionStore } from "@/store/session-store";
 import { useSocket } from "@/providers/socket-provider";
@@ -14,7 +17,15 @@ import {
   calculatePersonalSubtotal,
   splitEqually,
   calculatePersonalTotal,
+  MAX_DISPUTES_PER_PARTICIPANT,
 } from "@splitcheck/shared";
+
+const DISPUTE_SUGGESTIONS = [
+  "I didn't eat this item",
+  "The price is wrong",
+  "I shared this with someone",
+  "Other",
+];
 
 function CheckoutPageContent() {
   const router = useRouter();
@@ -30,7 +41,7 @@ function CheckoutPageContent() {
     updateParticipant,
   } = useSessionStore();
 
-  const { status, emitCheckout } = useSocket();
+  const { status, emitCheckout, emitSettle, emitDisputeCreate, lastDisputeResolution } = useSocket();
 
   const [loading, setLoading] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
@@ -42,6 +53,21 @@ function CheckoutPageContent() {
     serviceShare: number;
     total: number;
   } | null>(null);
+
+  // Dispute state
+  const [showDisputeForm, setShowDisputeForm] = useState(false);
+  const [disputeReason, setDisputeReason] = useState("");
+  const [disputeSubmitting, setDisputeSubmitting] = useState(false);
+  const [disputeSubmitted, setDisputeSubmitted] = useState(false);
+  const [disputeCount, setDisputeCount] = useState(0);
+  const [disputeError, setDisputeError] = useState("");
+
+  // Settlement state
+  const [showSettleConfirm, setShowSettleConfirm] = useState(false);
+  const [settleLoading, setSettleLoading] = useState(false);
+
+  // Dispute resolution received from host
+  const [resolutionMessage, setResolutionMessage] = useState("");
 
   const loadSession = useCallback(async () => {
     const result = await api.getSessionByCode(code);
@@ -55,6 +81,37 @@ function CheckoutPageContent() {
   useEffect(() => {
     loadSession();
   }, [loadSession]);
+
+  // Load dispute count for this participant
+  useEffect(() => {
+    if (currentParticipant && session) {
+      api.getParticipantDisputes(currentParticipant.participantId).then((res) => {
+        if (res.success && res.data) {
+          setDisputeCount(res.data.length);
+        }
+      });
+    }
+  }, [currentParticipant, session]);
+
+  // Handle dispute resolution from host (via WebSocket)
+  useEffect(() => {
+    if (lastDisputeResolution && currentParticipant) {
+      if (lastDisputeResolution.participant_id === currentParticipant.participantId) {
+        setDisputeSubmitted(false);
+        if (lastDisputeResolution.rejected) {
+          setResolutionMessage(
+            `The host reviewed your dispute: ${lastDisputeResolution.resolution_note || "Original total confirmed."}. You can accept this total or dispute again.`
+          );
+        } else {
+          setResolutionMessage(
+            `The host has updated your total${lastDisputeResolution.adjusted_total ? ` to ${formatEgp(lastDisputeResolution.adjusted_total)}` : ""}.`
+          );
+        }
+        setDisputeCount((prev) => prev); // Count was already incremented server-side
+        loadSession(); // Reload to get updated data
+      }
+    }
+  }, [lastDisputeResolution, currentParticipant, loadSession]);
 
   useEffect(() => {
     if (!pageLoading && !currentParticipant) {
@@ -70,8 +127,13 @@ function CheckoutPageContent() {
     );
   }
 
-  // Already checked out
-  if (currentParticipant.status === "CHECKED_OUT" || confirmed) {
+  const pStatus = currentParticipant.status;
+  const canDispute =
+    (pStatus === "REVIEWING" || pStatus === "CHECKED_OUT") &&
+    disputeCount < MAX_DISPUTES_PER_PARTICIPANT;
+
+  // ─── SETTLED State ────────────────────────────────────────
+  if (pStatus === "SETTLED") {
     const data = checkedOutData || {
       subtotal: currentParticipant.subtotal,
       taxShare: currentParticipant.taxShare,
@@ -85,6 +147,76 @@ function CheckoutPageContent() {
           <div className="space-y-2">
             <div className="text-4xl">✅</div>
             <h1 className="text-2xl font-bold">You&apos;re All Set!</h1>
+            <p className="text-muted-foreground">
+              {currentParticipant.displayName}, you paid
+            </p>
+            <p className="text-4xl font-bold">{formatEgp(data.total)}</p>
+          </div>
+          <Card>
+            <CardContent className="pt-4">
+              <CheckoutSummary
+                claimedItems={getClaimedItems()}
+                subtotal={data.subtotal}
+                taxShare={data.taxShare}
+                serviceShare={data.serviceShare}
+                total={data.total}
+              />
+            </CardContent>
+          </Card>
+          <Button variant="outline" className="w-full" onClick={() => router.push("/")}>
+            Done
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── DISPUTED State (waiting for host) ────────────────────
+  if (pStatus === "DISPUTED" || disputeSubmitted) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center px-4">
+        <div className="w-full max-w-sm space-y-6 text-center">
+          <div className="space-y-2">
+            <div className="text-4xl">⏳</div>
+            <h1 className="text-2xl font-bold">Dispute Submitted</h1>
+            <p className="text-muted-foreground">
+              Waiting for the host to review your dispute.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── CHECKED_OUT State (can settle or dispute) ────────────
+  if (pStatus === "CHECKED_OUT" || confirmed) {
+    const data = checkedOutData || {
+      subtotal: currentParticipant.subtotal,
+      taxShare: currentParticipant.taxShare,
+      serviceShare: currentParticipant.serviceShare,
+      total: currentParticipant.total,
+    };
+
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-start px-4 pt-8 pb-28">
+        <div className="w-full max-w-sm space-y-6">
+          <NudgeBanner />
+
+          {resolutionMessage && (
+            <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800">
+              {resolutionMessage}
+              <button
+                className="block mt-1 text-xs underline"
+                onClick={() => setResolutionMessage("")}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          <div className="text-center space-y-2">
+            <div className="text-4xl">✅</div>
+            <h1 className="text-2xl font-bold">Checked Out</h1>
             <p className="text-muted-foreground">
               {currentParticipant.displayName}, you owe
             </p>
@@ -103,19 +235,66 @@ function CheckoutPageContent() {
             </CardContent>
           </Card>
 
-          <Button
-            variant="outline"
-            className="w-full"
-            onClick={() => router.push("/")}
-          >
-            Done
-          </Button>
+          {/* Settlement Confirmation */}
+          {showSettleConfirm ? (
+            <Card>
+              <CardContent className="pt-4 space-y-3 text-center">
+                <p className="text-sm font-medium">
+                  Confirm that you&apos;ve paid {formatEgp(data.total)}?
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => setShowSettleConfirm(false)}
+                    disabled={settleLoading}
+                  >
+                    Not Yet
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    onClick={handleSettle}
+                    disabled={settleLoading}
+                  >
+                    {settleLoading ? "..." : "Yes, I've Paid"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Button
+              className="w-full h-12 text-base bg-amber-500 hover:bg-amber-600 text-white"
+              onClick={() => setShowSettleConfirm(true)}
+            >
+              I&apos;ve Paid 💰
+            </Button>
+          )}
+
+          {/* Dispute Button */}
+          {canDispute && !showDisputeForm && (
+            <button
+              className="w-full text-sm text-muted-foreground underline hover:text-foreground transition-colors"
+              onClick={() => setShowDisputeForm(true)}
+            >
+              Something doesn&apos;t look right
+            </button>
+          )}
+
+          {disputeCount >= MAX_DISPUTES_PER_PARTICIPANT && (
+            <p className="text-xs text-muted-foreground text-center">
+              You&apos;ve reached the dispute limit. Contact the host directly.
+            </p>
+          )}
+
+          {/* Dispute Form */}
+          {showDisputeForm && renderDisputeForm()}
         </div>
       </div>
     );
   }
 
-  // Calculate preview totals
+  // ─── REVIEWING / Pre-checkout State ───────────────────────
+
   const myClaims = items.flatMap((item) =>
     item.claims
       .filter((c) => c.participantId === currentParticipant.participantId)
@@ -162,7 +341,6 @@ function CheckoutPageContent() {
     setLoading(true);
     setError("");
 
-    // Try WebSocket first
     if (status === "connected") {
       const result = await emitCheckout({
         participant_id: currentParticipant!.participantId,
@@ -216,9 +394,149 @@ function CheckoutPageContent() {
     setLoading(false);
   }
 
+  async function handleSettle() {
+    setSettleLoading(true);
+
+    if (status === "connected") {
+      const result = await emitSettle({
+        participant_id: currentParticipant!.participantId,
+      });
+
+      if (!result.success) {
+        setError(result.error || "Failed to settle");
+      }
+      setSettleLoading(false);
+      setShowSettleConfirm(false);
+      return;
+    }
+
+    // REST fallback
+    const result = await api.settleParticipant(currentParticipant!.participantId);
+    if (!result.success) {
+      setError(result.error || "Failed to settle");
+    }
+    setSettleLoading(false);
+    setShowSettleConfirm(false);
+  }
+
+  async function handleSubmitDispute() {
+    if (!disputeReason.trim()) {
+      setDisputeError("Please enter a reason");
+      return;
+    }
+
+    setDisputeSubmitting(true);
+    setDisputeError("");
+
+    if (status === "connected") {
+      const result = await emitDisputeCreate({
+        session_id: session!.sessionId,
+        participant_id: currentParticipant!.participantId,
+        reason: disputeReason.trim(),
+      });
+
+      if (!result.success) {
+        setDisputeError(result.error || "Failed to submit dispute");
+        setDisputeSubmitting(false);
+        return;
+      }
+    } else {
+      const result = await api.createDispute({
+        session_id: session!.sessionId,
+        participant_id: currentParticipant!.participantId,
+        reason: disputeReason.trim(),
+      });
+
+      if (!result.success) {
+        setDisputeError(result.error || "Failed to submit dispute");
+        setDisputeSubmitting(false);
+        return;
+      }
+    }
+
+    setDisputeSubmitted(true);
+    setDisputeSubmitting(false);
+    setShowDisputeForm(false);
+    setDisputeReason("");
+    setDisputeCount((prev) => prev + 1);
+  }
+
+  function renderDisputeForm() {
+    return (
+      <Card>
+        <CardContent className="pt-4 space-y-3">
+          <Label className="text-sm font-medium">What&apos;s the issue?</Label>
+          <div className="flex flex-wrap gap-2">
+            {DISPUTE_SUGGESTIONS.map((suggestion) => (
+              <button
+                key={suggestion}
+                className={`text-xs rounded-full border px-3 py-1.5 transition-colors ${
+                  disputeReason === suggestion
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "hover:bg-muted"
+                }`}
+                onClick={() => setDisputeReason(suggestion === "Other" ? "" : suggestion)}
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+          <Input
+            placeholder="Describe the issue..."
+            value={disputeReason}
+            onChange={(e) => setDisputeReason(e.target.value)}
+            maxLength={200}
+          />
+          <p className="text-xs text-muted-foreground text-right">
+            {disputeReason.length}/200
+          </p>
+          {disputeError && (
+            <p className="text-xs text-destructive">{disputeError}</p>
+          )}
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => {
+                setShowDisputeForm(false);
+                setDisputeReason("");
+                setDisputeError("");
+              }}
+              disabled={disputeSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="flex-1"
+              onClick={handleSubmitDispute}
+              disabled={disputeSubmitting || !disputeReason.trim()}
+            >
+              {disputeSubmitting ? "Submitting..." : "Submit Dispute"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-start px-4 pt-8 pb-28">
       <div className="w-full max-w-sm space-y-6">
+        <NudgeBanner />
+
+        {resolutionMessage && (
+          <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 text-sm text-blue-800">
+            {resolutionMessage}
+            <button
+              className="block mt-1 text-xs underline"
+              onClick={() => setResolutionMessage("")}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
         <div className="text-center space-y-1">
           <h1 className="text-2xl font-bold">Review & Checkout</h1>
           <p className="text-sm text-muted-foreground">
@@ -239,6 +557,18 @@ function CheckoutPageContent() {
         </Card>
 
         {error && <p className="text-sm text-destructive">{error}</p>}
+
+        {/* Dispute Button (pre-checkout) */}
+        {canDispute && !showDisputeForm && (
+          <button
+            className="w-full text-sm text-muted-foreground underline hover:text-foreground transition-colors"
+            onClick={() => setShowDisputeForm(true)}
+          >
+            Something doesn&apos;t look right
+          </button>
+        )}
+
+        {showDisputeForm && renderDisputeForm()}
 
         <Button
           variant="ghost"

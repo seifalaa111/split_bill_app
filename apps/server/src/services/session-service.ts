@@ -95,6 +95,7 @@ export async function getSessionByCode(code: string) {
     total: Prisma.Decimal;
     joinedAt: Date;
     checkedOutAt: Date | null;
+    settledAt: Date | null;
     avatarColor: string;
   }
 
@@ -132,6 +133,7 @@ export async function getSessionByCode(code: string) {
       total: toNumber(p.total),
       joinedAt: p.joinedAt.toISOString(),
       checkedOutAt: p.checkedOutAt?.toISOString() ?? null,
+      settledAt: p.settledAt?.toISOString() ?? null,
       avatarColor: p.avatarColor,
     })),
   };
@@ -153,17 +155,16 @@ export async function updateSessionStatus(
   sessionId: string,
   status: string
 ) {
-  const validStatuses = [
-    SessionStatus.DRAFT,
-    SessionStatus.OPEN,
-    SessionStatus.CLOSED,
-  ];
-  if (!validStatuses.includes(status as SessionStatus)) {
-    throw new ValidationError(
-      `Invalid status. Must be one of: ${validStatuses.join(", ")}`
-    );
-  }
+  // Delegate to state machine service for validation and transition.
+  // Import dynamically to avoid circular dependency at module load time.
+  const { transitionSession } = await import("./state-machine-service");
 
+  const result = await transitionSession(
+    sessionId,
+    status as import("@splitcheck/shared").SessionStatus
+  );
+
+  // Return the updated session
   const session = await prisma.session.findUnique({
     where: { sessionId },
   });
@@ -172,28 +173,7 @@ export async function updateSessionStatus(
     throw new NotFoundError("Session not found");
   }
 
-  const currentStatus = session.status;
-  if (currentStatus === SessionStatus.DRAFT && status !== SessionStatus.OPEN) {
-    throw new ValidationError("DRAFT sessions can only transition to OPEN");
-  }
-  if (currentStatus === SessionStatus.OPEN && status !== SessionStatus.CLOSED) {
-    throw new ValidationError("OPEN sessions can only transition to CLOSED");
-  }
-  if (currentStatus === SessionStatus.CLOSED) {
-    throw new ValidationError("CLOSED sessions cannot change status");
-  }
-
-  const updateData: { status: string; closedAt?: Date } = { status };
-  if (status === SessionStatus.CLOSED) {
-    updateData.closedAt = new Date();
-  }
-
-  const updated = await prisma.session.update({
-    where: { sessionId },
-    data: updateData,
-  });
-
-  return serializeSession(updated);
+  return serializeSession(session);
 }
 
 export async function recalculateSessionTotals(sessionId: string) {

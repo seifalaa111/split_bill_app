@@ -48,4 +48,7 @@ export const RedisKeys = {
     `feed:buffer:${sessionId}:${participantId}`,
   premiumThreshold: (sessionId: string) =>
     `session:${sessionId}:premium_threshold`,
+  autoClose: (sessionId: string) => `session:${sessionId}:auto_close`,
+  participantStatusSince: (participantId: string) =>
+    `participant:${participantId}:status_since`,
 } as const;

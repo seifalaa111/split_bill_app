@@ -76,6 +76,7 @@ export async function buildAndCacheState(
     lineTotal: Prisma.Decimal;
     isShared: boolean;
     claimedQty: number;
+    absorbedByHost: boolean;
     createdAt: Date;
     claims: PrismaClaimWithParticipant[];
   }
@@ -92,6 +93,7 @@ export async function buildAndCacheState(
     total: Prisma.Decimal;
     joinedAt: Date;
     checkedOutAt: Date | null;
+    settledAt: Date | null;
     avatarColor: string;
   }
 
@@ -104,6 +106,7 @@ export async function buildAndCacheState(
     lineTotal: toNumber(item.lineTotal),
     isShared: item.isShared,
     claimedQty: item.claimedQty,
+    absorbedByHost: item.absorbedByHost,
     createdAt: item.createdAt.toISOString(),
   }));
 
@@ -121,6 +124,7 @@ export async function buildAndCacheState(
     total: toNumber(p.total),
     joinedAt: p.joinedAt.toISOString(),
     checkedOutAt: p.checkedOutAt?.toISOString() ?? null,
+    settledAt: p.settledAt?.toISOString() ?? null,
     avatarColor: p.avatarColor,
   }));
 

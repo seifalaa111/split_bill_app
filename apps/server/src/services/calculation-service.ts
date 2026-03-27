@@ -7,8 +7,10 @@ import {
   calculatePersonalTotal,
   calculateRoundingDifference,
   bankersRound,
+  ParticipantStatus,
 } from "@splitcheck/shared";
 import { ValidationError, NotFoundError } from "./session-service";
+import { transitionParticipant } from "./state-machine-service";
 
 type TransactionClient = Prisma.TransactionClient;
 
@@ -30,8 +32,16 @@ export async function checkoutParticipant(participantId: string) {
       throw new NotFoundError("Participant not found");
     }
 
-    if (participant.status === "CHECKED_OUT") {
-      throw new ValidationError("Already checked out");
+    // Validate status — can only checkout from CLAIMING or REVIEWING
+    const checkoutableStatuses: string[] = [
+      ParticipantStatus.CLAIMING,
+      ParticipantStatus.REVIEWING,
+    ];
+    if (!checkoutableStatuses.includes(participant.status)) {
+      if (participant.status === ParticipantStatus.CHECKED_OUT) {
+        throw new ValidationError("Already checked out");
+      }
+      throw new ValidationError("Cannot checkout from current status");
     }
 
     if (participant.claims.length === 0) {
@@ -67,17 +77,40 @@ export async function checkoutParticipant(participantId: string) {
 
     const total = calculatePersonalTotal(subtotal, taxShare, serviceShare);
 
-    const updated = await tx.participant.update({
+    // Update financial fields (status will be set by state machine)
+    await tx.participant.update({
       where: { participantId },
       data: {
-        status: "CHECKED_OUT",
         subtotal,
         taxShare,
         serviceShare,
         total,
-        checkedOutAt: new Date(),
       },
     });
+
+    // Transition status via state machine
+    // If coming from CLAIMING, we need to go through REVIEWING first
+    if (participant.status === ParticipantStatus.CLAIMING) {
+      await transitionParticipant(participantId, ParticipantStatus.REVIEWING, {
+        tx,
+        skipBroadcast: true,
+        skipSessionRecompute: true,
+      });
+    }
+    await transitionParticipant(participantId, ParticipantStatus.CHECKED_OUT, {
+      tx,
+      skipBroadcast: true,  // caller will broadcast
+      skipSessionRecompute: false,  // trigger session state recomputation
+    });
+
+    // Re-fetch to get updated record
+    const updated = await tx.participant.findUnique({
+      where: { participantId },
+    });
+
+    if (!updated) {
+      throw new NotFoundError("Participant not found after update");
+    }
 
     return serializeParticipant(updated);
   });
@@ -140,6 +173,7 @@ export async function getSessionSummary(sessionId: string) {
     total: Prisma.Decimal;
     joinedAt: Date;
     checkedOutAt: Date | null;
+    settledAt: Date | null;
     avatarColor: string;
   }
 
@@ -163,6 +197,7 @@ export async function getSessionSummary(sessionId: string) {
     lineTotal: Prisma.Decimal;
     isShared: boolean;
     claimedQty: number;
+    absorbedByHost: boolean;
     createdAt: Date;
     claims: ClaimRow[];
   }
@@ -179,6 +214,7 @@ export async function getSessionSummary(sessionId: string) {
     total: toNumber(p.total),
     joinedAt: p.joinedAt.toISOString(),
     checkedOutAt: p.checkedOutAt?.toISOString() ?? null,
+    settledAt: p.settledAt?.toISOString() ?? null,
     avatarColor: p.avatarColor,
   }));
 
@@ -191,6 +227,7 @@ export async function getSessionSummary(sessionId: string) {
     lineTotal: toNumber(item.lineTotal),
     isShared: item.isShared,
     claimedQty: item.claimedQty,
+    absorbedByHost: item.absorbedByHost,
     createdAt: item.createdAt.toISOString(),
     claims: item.claims.map((c: ClaimRow) => ({
       claimId: c.claimId,
@@ -204,10 +241,14 @@ export async function getSessionSummary(sessionId: string) {
     })),
   }));
 
-  const checkedOutParticipants = participants.filter(
-    (p) => p.status === "CHECKED_OUT"
+  // Count participants who have completed checkout (CHECKED_OUT, DISPUTED, or SETTLED)
+  const completedParticipants = participants.filter(
+    (p) =>
+      p.status === ParticipantStatus.CHECKED_OUT ||
+      p.status === ParticipantStatus.DISPUTED ||
+      p.status === ParticipantStatus.SETTLED
   );
-  const personalTotals = checkedOutParticipants.map((p) => p.total);
+  const personalTotals = completedParticipants.map((p) => p.total);
   const totalClaimed = bankersRound(
     personalTotals.reduce((sum: number, t: number) => sum + t, 0),
     2
@@ -239,7 +280,7 @@ export async function getSessionSummary(sessionId: string) {
     participants,
     totalClaimed,
     totalRemaining: bankersRound(billTotal - totalClaimed, 2),
-    checkoutCount: checkedOutParticipants.length,
+    checkoutCount: completedParticipants.length,
     roundingDifference,
   };
 }

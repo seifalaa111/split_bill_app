@@ -7,6 +7,11 @@ import { claimItem, unclaimItem } from "../services/claim-service";
 import { checkoutParticipant } from "../services/calculation-service";
 import { getCachedState, buildAndCacheState } from "../services/state-service";
 import { pushFeedEvent } from "../services/feed-service";
+import {
+  transitionParticipant,
+  evaluateCheckoutProgress,
+} from "../services/state-machine-service";
+import { ParticipantStatus } from "@splitcheck/shared";
 import type {
   ClientToServerEvents,
   ServerToClientEvents,
@@ -15,6 +20,9 @@ import type {
   ClaimCreatePayload,
   ClaimDeletePayload,
   ParticipantCheckoutPayload,
+  ParticipantSettlePayload,
+  DisputeCreatePayload,
+  NudgeDismissPayload,
 } from "@splitcheck/shared";
 
 export type TypedServer = Server<ClientToServerEvents, ServerToClientEvents>;
@@ -35,6 +43,48 @@ export function getIO(): TypedServer {
 
 function roomName(sessionId: string): string {
   return `session:${sessionId}`;
+}
+
+/**
+ * Find the socket(s) for a specific participant in a session room.
+ * Returns socket IDs for targeted emission.
+ */
+export function getParticipantSocketIds(
+  sessionId: string,
+  participantId: string
+): string[] {
+  if (!ioInstance) return [];
+  const room = roomName(sessionId);
+  const roomSockets = ioInstance.sockets.adapter.rooms.get(room);
+  if (!roomSockets) return [];
+
+  const matchingIds: string[] = [];
+  for (const socketId of roomSockets) {
+    const socket = ioInstance.sockets.sockets.get(socketId);
+    if (socket?.data?.participant_id === participantId) {
+      matchingIds.push(socketId);
+    }
+  }
+  return matchingIds;
+}
+
+/**
+ * Find the socket(s) for the host of a session.
+ */
+export function getHostSocketIds(sessionId: string): string[] {
+  if (!ioInstance) return [];
+  const room = roomName(sessionId);
+  const roomSockets = ioInstance.sockets.adapter.rooms.get(room);
+  if (!roomSockets) return [];
+
+  const matchingIds: string[] = [];
+  for (const socketId of roomSockets) {
+    const socket = ioInstance.sockets.sockets.get(socketId);
+    if (socket?.data?.role === "HOST") {
+      matchingIds.push(socketId);
+    }
+  }
+  return matchingIds;
 }
 
 export async function setupSocketIO(httpServer: HttpServer): Promise<TypedServer> {
@@ -91,7 +141,12 @@ export async function setupSocketIO(httpServer: HttpServer): Promise<TypedServer
     }
 
     // Store identity on socket for later use
-    socket.data = { session_id, participant_id, display_name: participant.displayName };
+    socket.data = {
+      session_id,
+      participant_id,
+      display_name: participant.displayName,
+      role: participant.role,
+    };
 
     // Join the session room
     const room = roomName(session_id);
@@ -127,7 +182,7 @@ export async function setupSocketIO(httpServer: HttpServer): Promise<TypedServer
       console.error("[WS] Failed to send state:sync on connect:", err);
     }
 
-    // ─── Event Handlers ────────────────────────────────────────
+    // ─── Phase 1/2 Event Handlers ──────────────────────────────
 
     socket.on("claim:create", async (payload: ClaimCreatePayload, ack: (response: WsAckResponse) => void) => {
       try {
@@ -264,6 +319,17 @@ export async function setupSocketIO(httpServer: HttpServer): Promise<TypedServer
             claimant_count: undefined,
           });
 
+          // Evaluate checkout progress milestones (50%, almost, complete)
+          await evaluateCheckoutProgress(session_id);
+
+          // Evaluate nudges for remaining participants
+          try {
+            const { evaluateCheckoutNudges } = await import("../services/nudge-service");
+            await evaluateCheckoutNudges(session_id);
+          } catch {
+            // Nudge service may not be loaded yet
+          }
+
           ack({
             success: true,
             data: result as unknown as Record<string, unknown>,
@@ -275,6 +341,86 @@ export async function setupSocketIO(httpServer: HttpServer): Promise<TypedServer
         }
       }
     );
+
+    // ─── Phase 3 Event Handlers ────────────────────────────────
+
+    socket.on(
+      "participant:settle",
+      async (payload: ParticipantSettlePayload, ack: (response: WsAckResponse) => void) => {
+        try {
+          const p = await prisma.participant.findUnique({
+            where: { participantId: payload.participant_id },
+          });
+
+          if (!p) {
+            ack({ success: false, error: "Participant not found" });
+            return;
+          }
+
+          // Transition to SETTLED via state machine
+          await transitionParticipant(
+            payload.participant_id,
+            ParticipantStatus.SETTLED
+          );
+
+          // Rebuild and cache state
+          await buildAndCacheState(session_id);
+
+          // Broadcast settlement
+          io.to(room).emit("participant:settled", {
+            participant_id: payload.participant_id,
+            display_name: p.displayName,
+          });
+
+          // Push feed event
+          await pushFeedEvent(session_id, {
+            type: "settled",
+            actor_name: p.displayName,
+            item_name: undefined,
+            amount: undefined,
+            claimant_count: undefined,
+          });
+
+          ack({ success: true });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Failed to settle";
+          ack({ success: false, error: message });
+        }
+      }
+    );
+
+    socket.on(
+      "dispute:create",
+      async (payload: DisputeCreatePayload, ack: (response: WsAckResponse) => void) => {
+        try {
+          // Delegate to dispute service
+          const { createDispute } = await import("../services/dispute-service");
+          const dispute = await createDispute({
+            sessionId: payload.session_id,
+            participantId: payload.participant_id,
+            reason: payload.reason,
+          });
+
+          // Rebuild state
+          await buildAndCacheState(session_id);
+
+          ack({
+            success: true,
+            data: dispute as unknown as Record<string, unknown>,
+          });
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : "Failed to create dispute";
+          ack({ success: false, error: message });
+        }
+      }
+    );
+
+    socket.on("nudge:dismiss", (_payload: NudgeDismissPayload) => {
+      // Nudge dismissals are tracked client-side in Zustand.
+      // No server-side action needed.
+    });
 
     // ─── Disconnect Handling ───────────────────────────────────
 
@@ -321,6 +467,28 @@ export async function setupSocketIO(httpServer: HttpServer): Promise<TypedServer
       }
     }
   }, 30_000);
+
+  // ─── Periodic Nudge Evaluator (every 60s) ───────────────────
+
+  setInterval(async () => {
+    try {
+      const { evaluateTimeBasedNudges } = await import("../services/nudge-service");
+      const rooms = io.sockets.adapter.rooms;
+
+      for (const [roomId] of rooms) {
+        if (!roomId.startsWith("session:")) continue;
+
+        const sessionId = roomId.replace("session:", "");
+        try {
+          await evaluateTimeBasedNudges(sessionId);
+        } catch {
+          // Skip nudge errors
+        }
+      }
+    } catch {
+      // Nudge service may not be loaded yet
+    }
+  }, 60_000);
 
   console.log("[Socket.IO] WebSocket server initialized");
 
