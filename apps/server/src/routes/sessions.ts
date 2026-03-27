@@ -7,7 +7,11 @@ import {
 } from "../services/session-service";
 import { createHostParticipant } from "../services/participant-service";
 import { getSessionSummary } from "../services/calculation-service";
+import { buildAndCacheState } from "../services/state-service";
+import { cachePremiumThreshold, pushFeedEvent } from "../services/feed-service";
+import { getIO } from "../ws/socket-server";
 import { handleServiceError } from "./error-handler";
+import { getSessionItems } from "../services/item-service";
 
 interface CreateSessionBody {
   billTotal: number;
@@ -71,9 +75,37 @@ export async function registerSessionRoutes(app: FastifyInstance) {
 
         const session = await updateSessionStatus(request.params.id, status);
 
-        // If transitioning to OPEN, create host participant
+        // If transitioning to OPEN, create host participant + cache premium threshold
         if (status === "OPEN" && hostDisplayName) {
           await createHostParticipant(request.params.id, hostDisplayName);
+
+          // Cache premium item threshold for feed messages
+          const items = await getSessionItems(request.params.id);
+          const unitPrices = items.map((i: { unitPrice: number }) => i.unitPrice);
+          await cachePremiumThreshold(request.params.id, unitPrices);
+
+          // Build initial state cache
+          await buildAndCacheState(request.params.id);
+        }
+
+        // If transitioning to CLOSED, broadcast to all clients
+        if (status === "CLOSED") {
+          try {
+            const io = getIO();
+            io.to(`session:${request.params.id}`).emit("session:closed", {
+              session_id: request.params.id,
+              reason: "Host closed the session",
+            });
+            await pushFeedEvent(request.params.id, {
+              type: "session_close",
+              actor_name: "Host",
+              item_name: undefined,
+              amount: undefined,
+              claimant_count: undefined,
+            });
+          } catch {
+            // Socket.IO may not be initialized yet
+          }
         }
 
         return reply.send({ success: true, data: session });

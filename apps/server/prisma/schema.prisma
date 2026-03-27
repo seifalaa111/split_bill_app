@@ -57,6 +57,7 @@ model Participant {
   total         Decimal   @default(0) @db.Decimal(10, 2)
   joinedAt      DateTime  @default(now()) @map("joined_at")
   checkedOutAt  DateTime? @map("checked_out_at")
+  avatarColor   String    @default("#BAE1FF") @map("avatar_color") @db.VarChar(7)
 
   session       Session   @relation(fields: [sessionId], references: [sessionId])
   claims        Claim[]

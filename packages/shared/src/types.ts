@@ -40,6 +40,7 @@ export interface Participant {
   total: number;
   joinedAt: string;
   checkedOutAt: string | null;
+  avatarColor: string;
 }
 
 export interface Claim {

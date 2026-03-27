@@ -1,10 +1,19 @@
 import { prisma } from "../lib/prisma";
 import { serializeParticipant } from "../lib/serializers";
-import { VALIDATION, SessionStatus, ParticipantRole } from "@splitcheck/shared";
+import { VALIDATION, SessionStatus, ParticipantRole, AVATAR_COLORS } from "@splitcheck/shared";
 import { ValidationError, NotFoundError } from "./session-service";
 
 interface JoinSessionInput {
   displayName: string;
+}
+
+function pickAvatarColor(usedColors: string[]): string {
+  const available = AVATAR_COLORS.filter((c) => !usedColors.includes(c));
+  if (available.length === 0) {
+    // All colors taken — pick random from full palette
+    return AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
+  }
+  return available[Math.floor(Math.random() * available.length)];
 }
 
 export async function joinSession(sessionId: string, input: JoinSessionInput) {
@@ -43,11 +52,17 @@ export async function joinSession(sessionId: string, input: JoinSessionInput) {
     throw new ValidationError("Name already taken");
   }
 
+  const usedColors = session.participants.map(
+    (p: { avatarColor: string }) => p.avatarColor
+  );
+  const avatarColor = pickAvatarColor(usedColors);
+
   const participant = await prisma.participant.create({
     data: {
       sessionId,
       displayName,
       role: ParticipantRole.GUEST,
+      avatarColor,
     },
   });
 
@@ -64,11 +79,14 @@ export async function createHostParticipant(
     throw new ValidationError("Host display name is required");
   }
 
+  const avatarColor = pickAvatarColor([]);
+
   const participant = await prisma.participant.create({
     data: {
       sessionId,
       displayName: trimmedName,
       role: ParticipantRole.HOST,
+      avatarColor,
     },
   });
 

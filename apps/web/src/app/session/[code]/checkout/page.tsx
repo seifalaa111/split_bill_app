@@ -3,9 +3,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { CheckoutSummary } from "@/components/checkout-summary";
+import { SocketWrapper } from "@/components/socket-wrapper";
 import { useSessionStore } from "@/store/session-store";
+import { useSocket } from "@/providers/socket-provider";
 import * as api from "@/lib/api";
 import { formatEgp } from "@/lib/utils";
 import {
@@ -14,7 +16,7 @@ import {
   calculatePersonalTotal,
 } from "@splitcheck/shared";
 
-export default function CheckoutPage() {
+function CheckoutPageContent() {
   const router = useRouter();
   const params = useParams();
   const code = params.code as string;
@@ -27,6 +29,8 @@ export default function CheckoutPage() {
     currentParticipant,
     updateParticipant,
   } = useSessionStore();
+
+  const { status, emitCheckout } = useSocket();
 
   const [loading, setLoading] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
@@ -158,6 +162,39 @@ export default function CheckoutPage() {
     setLoading(true);
     setError("");
 
+    // Try WebSocket first
+    if (status === "connected") {
+      const result = await emitCheckout({
+        participant_id: currentParticipant!.participantId,
+      });
+
+      if (!result.success) {
+        setError(result.error || "Failed to checkout");
+        setLoading(false);
+        return;
+      }
+
+      const data = result.data as {
+        subtotal: number;
+        taxShare: number;
+        serviceShare: number;
+        total: number;
+      } | undefined;
+
+      if (data) {
+        setCheckedOutData({
+          subtotal: data.subtotal,
+          taxShare: data.taxShare,
+          serviceShare: data.serviceShare,
+          total: data.total,
+        });
+      }
+      setConfirmed(true);
+      setLoading(false);
+      return;
+    }
+
+    // REST fallback
     const result = await api.checkoutParticipant(
       currentParticipant!.participantId
     );
@@ -225,5 +262,13 @@ export default function CheckoutPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function CheckoutPage() {
+  return (
+    <SocketWrapper>
+      <CheckoutPageContent />
+    </SocketWrapper>
   );
 }

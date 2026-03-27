@@ -4,6 +4,9 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { useSessionStore } from "@/store/session-store";
+import { useSocket } from "@/providers/socket-provider";
+import { SocketWrapper } from "@/components/socket-wrapper";
+import { ActivityFeedGuest } from "@/components/activity-feed-guest";
 import { ItemCard } from "@/components/item-card";
 import * as api from "@/lib/api";
 import { formatEgp } from "@/lib/utils";
@@ -13,7 +16,7 @@ import {
   calculatePersonalTotal,
 } from "@splitcheck/shared";
 
-export default function ClaimPage() {
+function ClaimPageContent() {
   const router = useRouter();
   const params = useParams();
   const code = params.code as string;
@@ -24,7 +27,12 @@ export default function ClaimPage() {
     setSession,
     setItems,
     currentParticipant,
+    optimisticClaim,
+    rollbackClaim,
+    optimisticUnclaim,
   } = useSessionStore();
+
+  const { status, emitClaimCreate, emitClaimDelete } = useSocket();
 
   const [loading, setLoading] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
@@ -56,9 +64,32 @@ export default function ClaimPage() {
     isShared: boolean
   ) {
     if (!currentParticipant) return;
-    setLoading(true);
     setError("");
 
+    // Optimistic update
+    optimisticClaim(itemId, currentParticipant.participantId, quantity, isShared);
+
+    // Try WebSocket first
+    if (status === "connected") {
+      const result = await emitClaimCreate({
+        item_id: itemId,
+        participant_id: currentParticipant.participantId,
+        quantity,
+        is_shared: isShared,
+      });
+
+      if (!result.success) {
+        // Rollback optimistic update
+        rollbackClaim(itemId, currentParticipant.participantId);
+        setError(result.error || "This item was just claimed by someone else");
+        return;
+      }
+      // state:sync from server will reconcile the full state
+      return;
+    }
+
+    // REST fallback
+    setLoading(true);
     const result = await api.claimItem(itemId, {
       participantId: currentParticipant.participantId,
       quantity,
@@ -66,22 +97,48 @@ export default function ClaimPage() {
     });
 
     if (!result.success) {
+      rollbackClaim(itemId, currentParticipant.participantId);
       setError(result.error || "Failed to claim item");
       setLoading(false);
       return;
     }
 
-    // Reload session to get updated claims
     await loadSession();
     setLoading(false);
   }
 
   async function handleUnclaim(claimId: string) {
-    setLoading(true);
+    if (!currentParticipant) return;
     setError("");
 
+    // Find the item this claim belongs to
+    const item = items.find((i) => i.claims.some((c) => c.claimId === claimId));
+    if (!item) return;
+
+    // Optimistic update
+    optimisticUnclaim(claimId, item.itemId);
+
+    // Try WebSocket first
+    if (status === "connected") {
+      const result = await emitClaimDelete({
+        claim_id: claimId,
+        participant_id: currentParticipant.participantId,
+      });
+
+      if (!result.success) {
+        // Reload to fix state
+        await loadSession();
+        setError(result.error || "Failed to unclaim item");
+        return;
+      }
+      return;
+    }
+
+    // REST fallback
+    setLoading(true);
     const result = await api.unclaimItem(claimId);
     if (!result.success) {
+      await loadSession();
       setError(result.error || "Failed to unclaim item");
       setLoading(false);
       return;
@@ -115,7 +172,6 @@ export default function ClaimPage() {
   const taxShares = splitEqually(session.taxAmount, participantCount);
   const serviceShares = splitEqually(session.serviceAmount, participantCount);
 
-  // Find my index in the participant list (host = 0)
   const sortedParticipants = [...(session.participants ?? [])].sort((a, b) => {
     if (a.role === "HOST") return -1;
     if (b.role === "HOST") return 1;
@@ -140,6 +196,9 @@ export default function ClaimPage() {
             Tap items you had — {currentParticipant.displayName}
           </p>
         </div>
+
+        {/* Activity Feed */}
+        <ActivityFeedGuest />
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
@@ -175,5 +234,13 @@ export default function ClaimPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function ClaimPage() {
+  return (
+    <SocketWrapper>
+      <ClaimPageContent />
+    </SocketWrapper>
   );
 }

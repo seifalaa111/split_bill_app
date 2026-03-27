@@ -81,6 +81,7 @@ export function serializeParticipant(participant: {
   total: Prisma.Decimal;
   joinedAt: Date;
   checkedOutAt: Date | null;
+  avatarColor: string;
 }) {
   return {
     participantId: participant.participantId,
@@ -94,6 +95,7 @@ export function serializeParticipant(participant: {
     total: toNumber(participant.total),
     joinedAt: participant.joinedAt.toISOString(),
     checkedOutAt: participant.checkedOutAt?.toISOString() ?? null,
+    avatarColor: participant.avatarColor,
   };
 }
 

@@ -95,6 +95,7 @@ export async function getSessionByCode(code: string) {
     total: Prisma.Decimal;
     joinedAt: Date;
     checkedOutAt: Date | null;
+    avatarColor: string;
   }
 
   return {
@@ -131,6 +132,7 @@ export async function getSessionByCode(code: string) {
       total: toNumber(p.total),
       joinedAt: p.joinedAt.toISOString(),
       checkedOutAt: p.checkedOutAt?.toISOString() ?? null,
+      avatarColor: p.avatarColor,
     })),
   };
 }

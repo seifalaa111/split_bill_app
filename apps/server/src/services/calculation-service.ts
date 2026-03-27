@@ -140,6 +140,7 @@ export async function getSessionSummary(sessionId: string) {
     total: Prisma.Decimal;
     joinedAt: Date;
     checkedOutAt: Date | null;
+    avatarColor: string;
   }
 
   interface ClaimRow {
@@ -178,6 +179,7 @@ export async function getSessionSummary(sessionId: string) {
     total: toNumber(p.total),
     joinedAt: p.joinedAt.toISOString(),
     checkedOutAt: p.checkedOutAt?.toISOString() ?? null,
+    avatarColor: p.avatarColor,
   }));
 
   const items = (session.items as ItemRow[]).map((item) => ({
